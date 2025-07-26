@@ -1,7 +1,7 @@
 // utils/mapbox.js
 import axios from 'axios';
 
-const MAPBOX_TOKEN = 'pk.eyJ1IjoiY3licml4IiwiYSI6ImNtZGhvZXB1ZjAzYmcyanNoYzlyMG5kdm8ifQ.7eaEBVIX4JgCiKZ1oOzjpQ';
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 export async function snapToRoad(coords) {
   if (coords.length < 2) return coords;

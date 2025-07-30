@@ -63,33 +63,21 @@ function isStop(current, previous) {
   return distanceM <= 50 && timeDiff >= 5;
 }
 
-// Get start/end date based on filter option
-function getDateRange(option) {
-  const now = new Date();
-  const start = new Date();
-  const end = new Date();
-
-  if (option === 'today') {
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  } else if (option === 'yesterday') {
-    start.setDate(now.getDate() - 1);
-    end.setDate(now.getDate() - 1);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  }
-
-  return { start, end };
-}
-
 function App() {
+  // Set up state (fromDate and toDate default to today)
+  const today = new Date();
+  const pad = (n) => n.toString().padStart(2, '0');
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+
+  const [fromDate, setFromDate] = useState(todayStr);
+  const [toDate, setToDate] = useState(todayStr);
+
   const [coordinates, setCoordinates] = useState([]); // Original DB points for markers/stops
   const [polylineCoords, setPolylineCoords] = useState([]); // Snapped points for polyline only
   const [distance, setDistance] = useState('0.00');
   const [stops, setStops] = useState([]);
   const [startTime, setStartTime] = useState(null);
   const [endTime, setEndTime] = useState(null);
-  const [filter, setFilter] = useState('today');
   const [trackingIds, setTrackingIds] = useState([]);
   const [selectedTrackingId, setSelectedTrackingId] = useState('All');
 
@@ -117,7 +105,6 @@ function App() {
   // Fetch coordinate data based on date filter and tracking ID selection
   useEffect(() => {
     const fetchData = async () => {
-      // Clear existing data while fetching
       setCoordinates([]);
       setPolylineCoords([]);
       setStops([]);
@@ -125,14 +112,14 @@ function App() {
       setStartTime(null);
       setEndTime(null);
 
-      const { start, end } = getDateRange(filter);
-      const fromTime = start.toISOString();
-      const toTime = end.toISOString();
+      // Combine from and to dates into ISO strings for querying
+      const fromTime = new Date(`${fromDate}T00:00:00.000Z`).toISOString();
+      const toTime = new Date(`${toDate}T23:59:59.999Z`).toISOString();
 
       try {
         let query = supabase
           .from('locations')
-          .select('latitude, longitude, timestamp, tracking_id, address')
+          .select('latitude, longitude, timestamp, tracking_id, address, battery_percentage, additional_data')
           .gte('timestamp', fromTime)
           .lte('timestamp', toTime)
           .order('timestamp', { ascending: true });
@@ -154,7 +141,6 @@ function App() {
         );
 
         if (validCoords.length === 0) {
-          // No data available
           setCoordinates([]);
           setPolylineCoords([]);
           setDistance('0.00');
@@ -195,7 +181,7 @@ function App() {
     };
 
     fetchData();
-  }, [filter, selectedTrackingId]); // refetch on filter or tracking ID change
+  }, [fromDate, toDate, selectedTrackingId]); // refetch on date/tracking ID change
 
   // Prepare polyline positions from snapped coords
   const polylinePositions = polylineCoords.map((c) => [c.latitude, c.longitude]);
@@ -224,16 +210,24 @@ function App() {
           )}
         </div>
         <div>
-          <label htmlFor="date-filter">Date: </label>
-          <select
-            id="date-filter"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            style={{ padding: '6px', marginRight: '10px' }}
-          >
-            <option value="today">Today</option>
-            <option value="yesterday">Yesterday</option>
-          </select>
+          <label htmlFor="from-date">From: </label>
+          <input
+            id="from-date"
+            type="date"
+            value={fromDate}
+            onChange={e => setFromDate(e.target.value)}
+            style={{ marginRight: "10px" }}
+            max={toDate}
+          />
+          <label htmlFor="to-date">To: </label>
+          <input
+            id="to-date"
+            type="date"
+            value={toDate}
+            onChange={e => setToDate(e.target.value)}
+            style={{ marginRight: "10px" }}
+            min={fromDate}
+          />
         </div>
         <div>
           <label htmlFor="tid-filter">Tracking ID: </label>
@@ -275,6 +269,16 @@ function App() {
               speedLabel = speed < 5 ? 'Walking' : 'Vehicle';
             }
 
+            // Parse additional_data if it's a string (in some setups, Supabase returns JSON as object, in others as string)
+            let additionalData = coord.additional_data;
+            if (additionalData && typeof additionalData === "string") {
+              try {
+                additionalData = JSON.parse(additionalData);
+              } catch (e) {
+                additionalData = {};
+              }
+            }
+
             return (
               <Marker key={index} position={position}>
                 <Popup>
@@ -287,25 +291,69 @@ function App() {
                   Time: {timestamp}
                   <br />
                   Mode: {speedLabel}
+                  <br />
+                  Battery: {coord.battery_percentage != null ? `${coord.battery_percentage}%` : "N/A"}
+                  <br />
+                  Device Model: {additionalData && additionalData.model ? additionalData.model : "N/A"}
+                  {/* You can add more fields if desired, e.g. OS, internet type, etc. */}
+                  {additionalData && (
+                    <>
+                      <br />
+                      OS: {additionalData.os_name ? additionalData.os_name : "N/A"}
+                      <br />
+                      OS Version: {additionalData.os_version ? additionalData.os_version : "N/A"}
+                      <br />
+                      Internet: {additionalData.internet ? additionalData.internet : "N/A"}
+                      <br />
+                      GPS Enabled: {typeof additionalData.gps_enabled === 'boolean' ? (additionalData.gps_enabled ? 'Yes' : 'No') : "N/A"}
+                    </>
+                  )}
                 </Popup>
               </Marker>
             );
           })}
 
           {/* Stops from original points */}
-          {stops.map((stop, index) => (
-            <Marker key={`stop-${index}`} position={[stop.latitude, stop.longitude]}>
-              <Popup>
-                <strong>Stopped Here</strong>
-                <br />
-                Tracking ID: {stop.tracking_id}
-                <br />
-                Address: {stop.address ? stop.address : 'N/A'}
-                <br />
-                Time: {new Date(stop.timestamp).toLocaleString()}
-              </Popup>
-            </Marker>
-          ))}
+          {stops.map((stop, index) => {
+            // Parse additional_data in case it's a string
+            let additionalData = stop.additional_data;
+            if (additionalData && typeof additionalData === "string") {
+              try {
+                additionalData = JSON.parse(additionalData);
+              } catch (e) {
+                additionalData = {};
+              }
+            }
+            return (
+              <Marker key={`stop-${index}`} position={[stop.latitude, stop.longitude]}>
+                <Popup>
+                  <strong>Stopped Here</strong>
+                  <br />
+                  Tracking ID: {stop.tracking_id}
+                  <br />
+                  Address: {stop.address ? stop.address : 'N/A'}
+                  <br />
+                  Time: {new Date(stop.timestamp).toLocaleString()}
+                  <br />
+                  Battery: {stop.battery_percentage != null ? `${stop.battery_percentage}%` : "N/A"}
+                  <br />
+                  Device Model: {additionalData && additionalData.model ? additionalData.model : "N/A"}
+                  {additionalData && (
+                    <>
+                      <br />
+                      OS: {additionalData.os_name ? additionalData.os_name : "N/A"}
+                      <br />
+                      OS Version: {additionalData.os_version ? additionalData.os_version : "N/A"}
+                      <br />
+                      Internet: {additionalData.internet ? additionalData.internet : "N/A"}
+                      <br />
+                      GPS Enabled: {typeof additionalData.gps_enabled === 'boolean' ? (additionalData.gps_enabled ? 'Yes' : 'No') : "N/A"}
+                    </>
+                  )}
+                </Popup>
+              </Marker>
+            );
+          })}
         </MapContainer>
       ) : (
         <p
